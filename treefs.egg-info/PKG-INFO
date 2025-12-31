@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: treefs
+Version: 1.0.0
+Summary: Filesystem generator/importer using tree, YAML, JSON, TOML and tree format. Deluxe edition.
+Author: Marcelo
+License-File: LICENSE
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: toml>=0.10.2
+Dynamic: license-file

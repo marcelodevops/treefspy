@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "treefs"
+version = "1.0.0"
+description = "Filesystem generator/importer using tree, YAML, JSON, TOML and tree format. Deluxe edition."
+authors = [{name="Marcelo"}]
+dependencies = ["PyYAML>=6.0", "toml>=0.10.2"]
+[project.scripts]
+treefs = "treefs:main"
