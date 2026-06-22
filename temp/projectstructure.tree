@@ -1,0 +1,17 @@
+platform/
+├── modules/
+│   ├── vpc/
+│   ├── eks/
+│   ├── pod-identity/
+│   ├── karpenter/
+│   └── argocd/
+│
+├── environments/
+│   ├── dev/
+│   ├── test/
+│   └── prod/
+│
+└── gitops/
+    ├── bootstrap/
+    ├── addons/
+    └── apps/

@@ -8,15 +8,17 @@ Features:
  - git init support (with .gitignore and hooks)
  - --force, --dry-run, --bundle (PyInstaller)
 """
+
 from __future__ import annotations
-import os
-import sys
+
 import argparse
 import json
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 # optional deps: pyyaml, toml
 try:
@@ -31,9 +33,11 @@ except Exception:
 
 TREE_CHARS = ["│", "├", "└", "─"]
 
+
 # ---------- Utilities ----------
 def is_tty() -> bool:
     return sys.stdout.isatty()
+
 
 def colorize(text: str, color: str) -> str:
     if not is_tty():
@@ -45,72 +49,152 @@ def colorize(text: str, color: str) -> str:
         "red": "\033[91m",
         "reset": "\033[0m",
     }
-    return f"{codes.get(color,'')}{text}{codes['reset']}"
+    return f"{codes.get(color, '')}{text}{codes['reset']}"
+
 
 def safe_print(msg: str = "", c: str = "green"):
     print(colorize(msg, c))
+
 
 def strip_tree_chars(line: str) -> str:
     for ch in TREE_CHARS:
         line = line.replace(ch, "")
     return line.strip()
 
+
 def ensure_parent(path: Path):
     if not path.parent.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
 
+
 # ---------- Build from tree file ----------
-def build_from_tree(tree_file: Path, root: Path, force: bool, dry_run: bool, templates_dir: Optional[Path]=None):
-    created = []
-    with tree_file.open("r", encoding="utf-8") as f:
-        lines = f.readlines()
+import re
 
-    for raw in lines:
-        line = raw.rstrip()
-        if not line or line.lower().startswith("project"):
-            continue
-        clean = strip_tree_chars(line)
-        if clean == "":
-            continue
 
-        fs_path = root / clean
-        if clean.endswith("/"):
-            if dry_run:
-                created.append(f"{fs_path}/ (would create)")
-            else:
-                fs_path.mkdir(parents=True, exist_ok=True)
-                created.append(str(fs_path) + "/")
+def get_depth(line: str) -> int:
+    """
+    Determine nesting level from tree indentation.
+    Handles both:
+        │   ├──
+        │   └──
+            ├──
+            └──
+    """
+    depth = 0
+    pos = 0
+
+    while True:
+        segment = line[pos : pos + 4]
+
+        if segment in ("│   ", "    "):
+            depth += 1
+            pos += 4
         else:
-            ensure_parent(fs_path)
-            if fs_path.exists() and not force:
-                created.append(f"{fs_path} (exists, kept)")
+            break
+
+    return depth
+
+
+def build_from_tree(
+    tree_file: Path,
+    root: Path,
+    force: bool,
+    dry_run: bool,
+    templates_dir: Optional[Path] = None,
+):
+    created = []
+
+    with tree_file.open("r", encoding="utf-8") as f:
+        lines = [line.rstrip("\n") for line in f if line.strip()]
+
+    stack = []
+
+    for line in lines:
+        # Skip headers
+        if line.lower().startswith("project"):
+            continue
+
+        # Root node (platform/, shctl/, etc.)
+        if "├──" not in line and "└──" not in line:
+            name = line.strip().rstrip("/")
+
+            current = root / name
+
+            if not dry_run:
+                current.mkdir(parents=True, exist_ok=True)
+
+            created.append(str(current) + "/")
+
+            stack = [current]
+            continue
+
+        depth = get_depth(line)
+
+        name = re.sub(r"^[│ ]*(├──|└──)\s*", "", line).rstrip()
+
+        while len(stack) > depth + 1:
+            stack.pop()
+
+        parent = stack[-1]
+
+        current = parent / name.rstrip("/")
+
+        if name.endswith("/"):
+            if not dry_run:
+                current.mkdir(parents=True, exist_ok=True)
+
+            created.append(str(current) + "/")
+
+            if len(stack) <= depth + 1:
+                stack.append(current)
             else:
-                if dry_run:
-                    created.append(f"{fs_path} (would create file)")
-                else:
-                    fs_path.write_text("", encoding="utf-8")
-                    created.append(str(fs_path))
-    # try applying templates (if provided): copy templates root into root/templates if exists
+                stack[depth + 1] = current
+
+        else:
+            ensure_parent(current)
+
+            if current.exists() and not force:
+                created.append(f"{current} (exists, kept)")
+            else:
+                if not dry_run:
+                    current.touch()
+
+                created.append(str(current))
+
+    # Preserve your existing template logic
     if templates_dir and templates_dir.exists():
         for item in templates_dir.rglob("*"):
             rel = item.relative_to(templates_dir)
             dest = root / rel
+
             if item.is_dir():
                 if not dry_run:
                     dest.mkdir(parents=True, exist_ok=True)
-                created.append(str(dest)+"/")
+
+                created.append(str(dest) + "/")
+
             else:
                 ensure_parent(dest)
+
                 if dest.exists() and not force:
                     created.append(f"{dest} (template exists, kept)")
                 else:
                     if not dry_run:
                         shutil.copy2(item, dest)
+
                     created.append(str(dest))
+
     return created
 
+
 # ---------- Build from mapping (dict) (YAML/JSON/TOML) ----------
-def build_from_dict(root: Path, structure: Dict[str, Any], force: bool, dry_run: bool, templates_dir: Optional[Path]=None):
+def build_from_dict(
+    root: Path,
+    structure: Dict[str, Any],
+    force: bool,
+    dry_run: bool,
+    templates_dir: Optional[Path] = None,
+):
     created = []
 
     def recurse(base: Path, node: Dict[str, Any]):
@@ -127,7 +211,7 @@ def build_from_dict(root: Path, structure: Dict[str, Any], force: bool, dry_run:
                             if item.is_dir():
                                 if not dry_run:
                                     dest.mkdir(parents=True, exist_ok=True)
-                                created.append(str(dest)+"/")
+                                created.append(str(dest) + "/")
                             else:
                                 ensure_parent(dest)
                                 if dest.exists() and not force:
@@ -142,10 +226,10 @@ def build_from_dict(root: Path, structure: Dict[str, Any], force: bool, dry_run:
             if isinstance(val, dict):
                 # directory
                 if dry_run:
-                    created.append(str(path)+"/ (would create)")
+                    created.append(str(path) + "/ (would create)")
                 else:
                     path.mkdir(parents=True, exist_ok=True)
-                    created.append(str(path)+"/")
+                    created.append(str(path) + "/")
                 recurse(path, val)
             else:
                 # val can be None or a string content
@@ -164,22 +248,26 @@ def build_from_dict(root: Path, structure: Dict[str, Any], force: bool, dry_run:
     recurse(root, structure)
     return created
 
+
 # ---------- Export helpers ----------
 def export_tree(root: Path, output: Path):
     lines = [root.name + "/"]
-    def tree(p: Path, prefix: str=""):
+
+    def tree(p: Path, prefix: str = ""):
         entries = sorted([e.name for e in p.iterdir()])
-        last_idx = len(entries)-1
+        last_idx = len(entries) - 1
         for i, name in enumerate(entries):
             full = p / name
-            connector = "└── " if i==last_idx else "├── "
+            connector = "└── " if i == last_idx else "├── "
             lines.append(prefix + connector + name)
             if full.is_dir():
-                ext = "    " if i==last_idx else "│   "
+                ext = "    " if i == last_idx else "│   "
                 tree(full, prefix + ext)
+
     tree(root)
     output.write_text("\n".join(lines), encoding="utf-8")
     return str(output)
+
 
 def export_dict(root: Path) -> Dict[str, Any]:
     def recurse(p: Path):
@@ -193,16 +281,29 @@ def export_dict(root: Path) -> Dict[str, Any]:
                 except Exception:
                     data[child.name] = ""
         return data
+
     return {root.name: recurse(root)}
 
+
 # ---------- Git support ----------
-def init_git(root: Path, gitignore: Optional[Path]=None, hooks_dir: Optional[Path]=None, dry_run: bool=False):
+def init_git(
+    root: Path,
+    gitignore: Optional[Path] = None,
+    hooks_dir: Optional[Path] = None,
+    dry_run: bool = False,
+):
     created = []
     if dry_run:
         created.append("git init (would run)")
     else:
         try:
-            subprocess.run(["git","init"], cwd=str(root), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                ["git", "init"],
+                cwd=str(root),
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             created.append("git init")
         except Exception as e:
             created.append(f"git init (failed: {e})")
@@ -237,14 +338,18 @@ def init_git(root: Path, gitignore: Optional[Path]=None, hooks_dir: Optional[Pat
                 created.append(str(target))
     return created
 
+
 # ---------- Bundling (PyInstaller) ----------
-def bundle_binary(entry: Path, name: Optional[str]=None, clean: bool=True):
+def bundle_binary(entry: Path, name: Optional[str] = None, clean: bool = True):
     """
     Try to call PyInstaller to create a single-file executable.
     Returns tuple(success:bool, message:str)
     """
     if shutil.which("pyinstaller") is None:
-        return False, "PyInstaller not found on PATH. Install it: pip install pyinstaller"
+        return (
+            False,
+            "PyInstaller not found on PATH. Install it: pip install pyinstaller",
+        )
     cmd = ["pyinstaller", "--onefile", "--name", name or entry.stem, str(entry)]
     if clean:
         cmd.append("--clean")
@@ -253,6 +358,7 @@ def bundle_binary(entry: Path, name: Optional[str]=None, clean: bool=True):
         return True, "Bundled with PyInstaller (dist/{}).".format(name or entry.stem)
     except Exception as e:
         return False, f"PyInstaller failed: {e}"
+
 
 # ---------- File format helpers ----------
 def load_config(path: Path) -> Dict[str, Any]:
@@ -273,7 +379,8 @@ def load_config(path: Path) -> Dict[str, Any]:
     else:
         raise RuntimeError("Unsupported config format: " + ext)
 
-def dump_config(structure: Dict[str,Any], output: Path, fmt: str):
+
+def dump_config(structure: Dict[str, Any], output: Path, fmt: str):
     if fmt == "yaml":
         if yaml is None:
             raise RuntimeError("PyYAML required for YAML support. pip install pyyaml")
@@ -287,21 +394,40 @@ def dump_config(structure: Dict[str,Any], output: Path, fmt: str):
     else:
         raise RuntimeError("Unknown output format: " + fmt)
 
+
 # ---------- CLI ----------
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="treefs", description="TreeFS — build/export directory structures (deluxe)")
+    parser = argparse.ArgumentParser(
+        prog="treefs", description="TreeFS — build/export directory structures (deluxe)"
+    )
     sub = parser.add_subparsers(dest="cmd")
 
     # build
     b = sub.add_parser("build", help="Build directory tree from tree/config")
     b.add_argument("input", help="Input file (tree, yaml, json, toml)")
     b.add_argument("root", help="Target root directory (created if missing)")
-    b.add_argument("--templates", help="Templates folder to copy from (optional)", default=None)
+    b.add_argument(
+        "--templates", help="Templates folder to copy from (optional)", default=None
+    )
     b.add_argument("--force", action="store_true", help="Overwrite existing files")
-    b.add_argument("--dry-run", action="store_true", help="Show what would be created, don't touch FS")
-    b.add_argument("--init-git", action="store_true", help="Run git init inside the root after build")
-    b.add_argument("--gitignore", help="Path to .gitignore file to copy into root", default=None)
-    b.add_argument("--git-hooks", help="Path to hooks directory which will be copied to .git/hooks", default=None)
+    b.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be created, don't touch FS",
+    )
+    b.add_argument(
+        "--init-git",
+        action="store_true",
+        help="Run git init inside the root after build",
+    )
+    b.add_argument(
+        "--gitignore", help="Path to .gitignore file to copy into root", default=None
+    )
+    b.add_argument(
+        "--git-hooks",
+        help="Path to hooks directory which will be copied to .git/hooks",
+        default=None,
+    )
 
     # export tree
     t = sub.add_parser("export-tree", help="Export a directory as tree-format text")
@@ -309,12 +435,19 @@ def main(argv=None):
     t.add_argument("output", help="Output tree file path")
 
     # export config
-    c = sub.add_parser("export-config", help="Export a directory to YAML/JSON/TOML config")
+    c = sub.add_parser(
+        "export-config", help="Export a directory to YAML/JSON/TOML config"
+    )
     c.add_argument("root", help="Directory to export")
-    c.add_argument("output", help="Output file path (ext decides format .yaml/.json/.toml)")
+    c.add_argument(
+        "output", help="Output file path (ext decides format .yaml/.json/.toml)"
+    )
 
     # bundle
-    p = sub.add_parser("bundle", help="Bundle a script into a single binary using PyInstaller (requires PyInstaller)")
+    p = sub.add_parser(
+        "bundle",
+        help="Bundle a script into a single binary using PyInstaller (requires PyInstaller)",
+    )
     p.add_argument("entry", help="Python entry script to bundle (e.g. treefs.py)")
     p.add_argument("--name", help="Name for the binary", default=None)
 
@@ -332,16 +465,32 @@ def main(argv=None):
         if ext in (".yaml", ".yml", ".json", ".toml"):
             safe_print("Loading structured config...", "blue")
             structure = load_config(inp)
-            if isinstance(structure, dict) and len(structure)==1 and any(isinstance(v, dict) for v in structure.values()):
+            if (
+                isinstance(structure, dict)
+                and len(structure) == 1
+                and any(isinstance(v, dict) for v in structure.values())
+            ):
                 # If top-level is a named root, unwrap to build under root/<name>
                 # We will create under root/<topname> by default; to mimic prior behavior, if user
                 # expects top-level root to be the name of project, they can set root accordingly.
                 # Here we build the structure inside the provided root.
                 pass
-            created = build_from_dict(root, structure, force=args.force, dry_run=args.dry_run, templates_dir=templates_dir)
+            created = build_from_dict(
+                root,
+                structure,
+                force=args.force,
+                dry_run=args.dry_run,
+                templates_dir=templates_dir,
+            )
         else:
             safe_print("Parsing tree text file...", "blue")
-            created = build_from_tree(inp, root, force=args.force, dry_run=args.dry_run, templates_dir=templates_dir)
+            created = build_from_tree(
+                inp,
+                root,
+                force=args.force,
+                dry_run=args.dry_run,
+                templates_dir=templates_dir,
+            )
 
         safe_print("\nCreated / Verified:", "yellow")
         for cstr in created:
@@ -350,7 +499,12 @@ def main(argv=None):
         # git init if requested
         if args.init_git:
             safe_print("\nInitializing git...", "blue")
-            gi = init_git(root, gitignore=Path(args.gitignore) if args.gitignore else None, hooks_dir=Path(args.git_hooks) if args.git_hooks else None, dry_run=args.dry_run)
+            gi = init_git(
+                root,
+                gitignore=Path(args.gitignore) if args.gitignore else None,
+                hooks_dir=Path(args.git_hooks) if args.git_hooks else None,
+                dry_run=args.dry_run,
+            )
             for g in gi:
                 safe_print(" - " + g)
 
@@ -379,6 +533,7 @@ def main(argv=None):
             safe_print(msg, "red")
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()
