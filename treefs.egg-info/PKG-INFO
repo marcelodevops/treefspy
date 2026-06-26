@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: treefs
-Version: 1.2.0
+Version: 1.3.0
 Summary: Filesystem generator/importer using tree, YAML, JSON, TOML and tree format. Deluxe edition.
 Author: Marcelo
 License-File: LICENSE

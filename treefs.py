@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -68,49 +69,23 @@ def ensure_parent(path: Path):
 
 
 # ---------- Build from tree file ----------
-import re
 
 BRANCH_RE = re.compile(r"(├──|└──|\|--|\+--|`--)")
 
 
 def parse_tree_line(line: str):
-    """
-    Returns (depth, name)
 
-    Supports:
-        ├──
-        └──
-        |--
-        +--
-        `--
-    """
+    line = line.rstrip()
 
-    match = BRANCH_RE.search(line)
+    # remove tree glyphs safely
+    name = re.sub(r"^[\s│├└─\|`+-]+", "", line)
 
-    if not match:
-        return 0, line.strip()
+    # compute depth from leading structure only
+    leading = len(line) - len(line.lstrip(" │├└─|"))
 
-    prefix = line[: match.start()]
+    depth = leading // 4  # assume 4-space tree style
 
-    depth = 0
-
-    i = 0
-
-    while i < len(prefix):
-        if prefix[i] in ("│", "|"):
-            depth += 1
-            i += 4
-
-        elif prefix[i : i + 4] == "    ":
-            depth += 1
-            i += 4
-
-        else:
-            i += 1
-
-    name = line[match.end() :].strip()
-
-    return depth + 1, name
+    return depth, name
 
 
 def build_from_tree(
