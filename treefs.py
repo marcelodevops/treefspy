@@ -70,29 +70,47 @@ def ensure_parent(path: Path):
 # ---------- Build from tree file ----------
 import re
 
+BRANCH_RE = re.compile(r"(├──|└──|\|--|\+--|`--)")
 
-def get_depth(line: str) -> int:
+
+def parse_tree_line(line: str):
     """
-    Determine nesting level from tree indentation.
-    Handles both:
-        │   ├──
-        │   └──
-            ├──
-            └──
+    Returns (depth, name)
+
+    Supports:
+        ├──
+        └──
+        |--
+        +--
+        `--
     """
+
+    match = BRANCH_RE.search(line)
+
+    if not match:
+        return 0, line.strip()
+
+    prefix = line[: match.start()]
+
     depth = 0
-    pos = 0
 
-    while True:
-        segment = line[pos : pos + 4]
+    i = 0
 
-        if segment in ("│   ", "    "):
+    while i < len(prefix):
+        if prefix[i] in ("│", "|"):
             depth += 1
-            pos += 4
-        else:
-            break
+            i += 4
 
-    return depth
+        elif prefix[i : i + 4] == "    ":
+            depth += 1
+            i += 4
+
+        else:
+            i += 1
+
+    name = line[match.end() :].strip()
+
+    return depth + 1, name
 
 
 def build_from_tree(
@@ -102,87 +120,66 @@ def build_from_tree(
     dry_run: bool,
     templates_dir: Optional[Path] = None,
 ):
-    created = []
 
-    with tree_file.open("r", encoding="utf-8") as f:
-        lines = [line.rstrip("\n") for line in f if line.strip()]
+    created = []
 
     stack = []
 
-    for line in lines:
-        # Skip headers
-        if line.lower().startswith("project"):
-            continue
+    with tree_file.open("r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.rstrip()
 
-        # Root node (platform/, shctl/, etc.)
-        if "├──" not in line and "└──" not in line:
-            name = line.strip().rstrip("/")
+            if not line:
+                continue
 
-            current = root / name
+            if line.lower().startswith("project"):
+                continue
 
-            if not dry_run:
-                current.mkdir(parents=True, exist_ok=True)
+            depth, name = parse_tree_line(line)
 
-            created.append(str(current) + "/")
+            is_dir = name.endswith("/")
 
-            stack = [current]
-            continue
+            name = name.rstrip("/")
 
-        depth = get_depth(line)
+            # Root node
+            if depth == 0:
+                current = root / name
 
-        name = re.sub(r"^[│ ]*(├──|└──)\s*", "", line).rstrip()
-
-        while len(stack) > depth + 1:
-            stack.pop()
-
-        parent = stack[-1]
-
-        current = parent / name.rstrip("/")
-
-        if name.endswith("/"):
-            if not dry_run:
-                current.mkdir(parents=True, exist_ok=True)
-
-            created.append(str(current) + "/")
-
-            if len(stack) <= depth + 1:
-                stack.append(current)
-            else:
-                stack[depth + 1] = current
-
-        else:
-            ensure_parent(current)
-
-            if current.exists() and not force:
-                created.append(f"{current} (exists, kept)")
-            else:
                 if not dry_run:
-                    current.touch()
+                    current.mkdir(parents=True, exist_ok=True)
+
+                stack = [current]
+
+                created.append(str(current) + "/")
+
+                continue
+
+            while len(stack) > depth:
+                stack.pop()
+
+            parent = stack[-1]
+
+            current = parent / name
+
+            if is_dir:
+                if not dry_run:
+                    current.mkdir(parents=True, exist_ok=True)
+
+                created.append(str(current) + "/")
+
+                if len(stack) == depth:
+                    stack.append(current)
+                else:
+                    stack[depth] = current
+
+            else:
+                ensure_parent(current)
+
+                if not dry_run:
+                    if force or not current.exists():
+                        current.touch()
 
                 created.append(str(current))
-
-    # Preserve your existing template logic
-    if templates_dir and templates_dir.exists():
-        for item in templates_dir.rglob("*"):
-            rel = item.relative_to(templates_dir)
-            dest = root / rel
-
-            if item.is_dir():
-                if not dry_run:
-                    dest.mkdir(parents=True, exist_ok=True)
-
-                created.append(str(dest) + "/")
-
-            else:
-                ensure_parent(dest)
-
-                if dest.exists() and not force:
-                    created.append(f"{dest} (template exists, kept)")
-                else:
-                    if not dry_run:
-                        shutil.copy2(item, dest)
-
-                    created.append(str(dest))
 
     return created
 
