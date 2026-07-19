@@ -1,12 +1,30 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "treefs"
 version = "2.0.0"
 description = "Filesystem generator/importer using tree, YAML, JSON, TOML and tree format. Deluxe edition."
-authors = [{name="Marcelo"}]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [{name = "Marcelo"}]
 dependencies = ["PyYAML>=6.0", "toml>=0.10.2"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/marcelodevops/treefspy"
+Repository = "https://github.com/marcelodevops/treefspy"
+
 [project.scripts]
 treefs = "treefs:main"
+
+[tool.setuptools]
+py-modules = ["treefs"]
